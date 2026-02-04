@@ -1,44 +1,40 @@
+// api/comments.js
 export default async function handler(req, res) {
     const { chapterUrl } = req.query;
 
     try {
-        const response = await fetch(chapterUrl, {
-            headers: { "User-Agent": "Mozilla/5.0" }
+        const pageResponse = await fetch(chapterUrl, {
+            headers: { 
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
         });
-        const html = await response.text();
+        const html = await pageResponse.text();
 
-        // 1. Find the "BAILOUT" section where the comments live
-        // This is a rough extract of the JSON hidden in the script tags
-        const scriptData = html.match(/self\.__next_f\.push\((\[1,.*?\])\)/g);
+        // 1. IMPROVED EXTRACTION: This searches the entire Next.js JSON blob
+        // It looks for any 36-character UUID following a "chapterId" or "id" key
+        const uuidRegex = /"(?:chapterId|id)"\s*:\s*"([a-f0-9-]{36})"/i;
+        const match = html.match(uuidRegex);
         
-        if (!scriptData) throw new Error("Could not find the data layer on this page.");
-
-        // 2. Clean and combine the fragments
-        let fullData = scriptData.map(s => s.replace(/self\.__next_f\.push\(| \)$/g, '')).join('');
-
-        // 3. Use Regex to find comment-like patterns (user names + bodies)
-        // Since the JSON is escaped and fragmented, a direct JSON.parse often fails.
-        // We look for the "body" and "name" keys specifically.
-        const comments = [];
-        const commentRegex = /\\"id\\":(\d+),.*?\\"body\\":\\"(.*?)\\",.*?\\"name\\":\\"(.*?)\\"/g;
-        
-        let match;
-        while ((match = commentRegex.exec(fullData)) !== null) {
-            comments.push({
-                id: match[1],
-                body: match[2].replace(/\\u003cp\\>|\\u003c\/p\\>/g, ''), // Clean HTML tags
-                user: match[3]
-            });
+        if (!match) {
+            throw new Error("Data layer not found. Asura might have updated their structure.");
         }
 
-        // 4. Return the data found directly in the HTML
-        res.status(200).json({
-            source: "HTML Scrape (No API)",
-            count: comments.length,
-            comments: comments
+        const uuid = match[1];
+
+        // 2. FETCH COMMENTS
+        const commentResponse = await fetch(`https://gg.asuracomic.net/api/chapters/${uuid}/comments`, {
+            headers: {
+                "Referer": "https://asuracomic.net/",
+                "User-Agent": "Mozilla/5.0",
+                "Host": "gg.asuracomic.net"
+            }
         });
+
+        const data = await commentResponse.json();
+        res.status(200).json(data);
 
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 }
+
