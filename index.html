@@ -1,54 +1,48 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>Auto Asura Comments</title>
+    <title>Asura Comments Test</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
-        .input-group { margin-bottom: 20px; }
-        input { width: 400px; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #222; color: white; }
-        button { padding: 10px 20px; background: #6366f1; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .comment { background: #1e1e1e; padding: 15px; border-bottom: 1px solid #333; margin-top: 10px; }
-        .user { color: #818cf8; font-weight: bold; }
+        body { font-family: sans-serif; padding: 20px; }
+        input { width: 100%; padding: 8px; }
+        button { margin-top: 10px; padding: 8px 12px; }
+        .comment { margin-top: 10px; padding: 8px; border-bottom: 1px solid #ccc; }
+        .user { font-weight: bold; }
     </style>
 </head>
 <body>
-    <h1>Auto-Fetch Comments</h1>
-    <div class="input-group">
-        <input type="text" id="urlInput" placeholder="Paste Asura Chapter URL here...">
-        <button onclick="fetchAuto()">Get Comments</button>
-    </div>
 
-    <div id="status"></div>
-    <div id="results"></div>
+<h2>AsuraScans Comments Scraper</h2>
 
-    <script>
-        async function fetchAuto() {
-            const url = document.getElementById('urlInput').value;
-            const resDiv = document.getElementById('results');
-            const status = document.getElementById('status');
-            
-            status.innerText = "Searching for hidden ID and fetching comments...";
-            resDiv.innerHTML = "";
+<input id="url" placeholder="Paste chapter URL here" />
+<button onclick="loadComments()">Load Comments</button>
 
-            try {
-                const response = await fetch(`/api/comments?chapterUrl=${encodeURIComponent(url)}`);
-                const data = await response.json();
+<div id="comments"></div>
 
-                if(data.error) throw new Error(data.error);
+<script>
+async function loadComments() {
+    const url = document.getElementById("url").value;
+    const out = document.getElementById("comments");
+    out.innerHTML = "Loading...";
 
-                status.innerText = `Found UUID: ${data.uuid} | Showing latest comments`;
-                
-                data.comments.slice(0, 10).forEach(c => {
-                    const div = document.createElement('div');
-                    div.className = 'comment';
-                    div.innerHTML = `<span class="user">${c.user.name}:</span> <div>${c.body}</div>`;
-                    resDiv.appendChild(div);
-                });
-            } catch (e) {
-                status.innerText = "Error: " + e.message;
-            }
-        }
-    </script>
+    const res = await fetch(`/api/comments?chapterUrl=${encodeURIComponent(url)}`);
+    const data = await res.json();
+
+    if (data.error) {
+        out.innerHTML = "Error: " + data.error;
+        return;
+    }
+
+    out.innerHTML = "";
+    data.forEach(c => {
+        const div = document.createElement("div");
+        div.className = "comment";
+        div.innerHTML = `<div class="user">${c.user}</div><div>${c.text}</div>`;
+        out.appendChild(div);
+    });
+}
+</script>
+
 </body>
 </html>
