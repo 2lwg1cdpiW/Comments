@@ -1,43 +1,44 @@
-// api/comments.js
 export default async function handler(req, res) {
     const { chapterUrl } = req.query;
+    if (!chapterUrl) return res.status(400).json({ error: "Missing URL" });
 
     try {
-        // 1. Fetch the page to find the internal ID (Scrape phase)
         const response = await fetch(chapterUrl, {
-            headers: { "User-Agent": "Mozilla/5.0" }
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0" }
         });
         const html = await response.text();
 
-        // 2. Locate the Chapter ID in that mess of code you sent
-        // It's usually near the "chapter": {"id": 27562 ...} part
-        const idMatch = html.match(/"chapter"\s*:\s*{\s*"id"\s*:\s*(\d+)/) || 
-                        html.match(/"chapterId"\s*:\s*"([a-f0-9-]{36})"/);
-        
-        if (!idMatch) throw new Error("Could not find ID in source code.");
-        const internalId = idMatch[1];
+        // 1. KT LOGIC: Extract the raw script data between push( and )
+        const scriptData = [];
+        const regex = /self\.__next_f\.push\(\[1,"(.*?)"\]\)/g;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            scriptData.push(match[1]);
+        }
 
-        // 3. Now hit the comment endpoint (API phase)
-        // This is the only way to get the data now that they hidden it from HTML
-        const commentRes = await fetch(`https://gg.asuracomic.net/api/chapters/${internalId}/comments?page=1`, {
-            headers: {
-                "Referer": "https://asuracomic.net/",
-                "User-Agent": "Mozilla/5.0",
-                "Host": "gg.asuracomic.net"
-            }
-        });
+        // 2. Combine and clean the escaped string (Exactly like StringBuilder in KT)
+        const fullContent = scriptData.join('').replace(/\\n/g, '').replace(/\\"/g, '"');
 
-        const data = await commentRes.json();
+        // 3. FIND COMMENTS: Now we search that giant string for the body and user name
+        // Pattern: "body":"...", "user":{"name":"..."}
+        const commentRegex = /"body":"(.*?)".*?"user":\{.*?"name":"(.*?)"/g;
+        const comments = [];
+        let cMatch;
 
-        // 4. Return clean data so you don't have to worry about their tracking
-        const clean = (data.data || []).map(c => ({
-            user: c.user.name,
-            comment: c.body.replace(/<\/?[^>]+(>|$)/g, "") // Strip HTML tags
-        }));
+        while ((cMatch = commentRegex.exec(fullContent)) !== null) {
+            comments.push({
+                user: cMatch[2],
+                text: cMatch[1].replace(/<p>/g, '').replace(/<\/p>/g, '') // Strip tags
+            });
+        }
 
-        res.status(200).json(clean);
+        if (comments.length === 0) {
+            throw new Error("KT-Scraper found 0 comments in script blocks.");
+        }
+
+        res.status(200).json(comments.slice(0, 10));
 
     } catch (e) {
-        res.status(500).json({ error: "Scraper Blocked: " + e.message });
+        res.status(500).json({ error: e.message });
     }
 }
