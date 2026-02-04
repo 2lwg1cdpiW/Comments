@@ -4,57 +4,59 @@ export default async function handler(req, res) {
 
     try {
         const response = await fetch(chapterUrl, {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+            headers: { "User-Agent": "Mozilla/5.0" }
         });
-
         const html = await response.text();
 
-        // Extract the JSON from <script id="__NEXT_DATA__">...</script>
-        const nextDataMatch = html.match(
-            /<script id="__NEXT_DATA__" type="application\/json">(.+?)<\/script>/
+        // Step 1: Extract the JSON-like comment block
+        // Pattern: looks like {"id":..., "body":"...", "user":{...}, ...}
+        const jsonMatch = html.match(
+            /(\{\\?"id\\?":\d+,\\?"body\\?":".*?\\?",\\?"user\\?":\{.*?\}\})/gs
         );
 
-        if (!nextDataMatch) {
-            return res.status(404).json({ error: "Could not find __NEXT_DATA__ JSON" });
+        if (!jsonMatch) {
+            return res.status(404).json({ error: "No comment JSON found" });
         }
 
-        const jsonData = JSON.parse(nextDataMatch[1]);
-
-        // Navigate to the comments array in the JSON (site-dependent path)
-        // Adjust these keys based on actual JSON structure
-        const commentsRaw =
-            jsonData?.props?.pageProps?.initialData?.comments || [];
-
-        if (!commentsRaw.length) {
-            return res.status(404).json({ error: "No comments found" });
-        }
-
-        // Clean up the comment body from HTML entities/tags
-        function decodeHtml(str) {
+        // Step 2: Convert escaped unicode / HTML entities
+        function decode(str) {
             return str
-                .replace(/&amp;/g, '&')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&quot;/g, '"')
-                .replace(/&#039;/g, "'")
-                .replace(/<[^>]+>/g, '') // remove remaining HTML tags
+                .replace(/\\u003c/g, '<')
+                .replace(/\\u003e/g, '>')
+                .replace(/\\u0026#039;/g, "'")
+                .replace(/\\u0026amp;/g, '&')
+                .replace(/<[^>]+>/g, '') // strip HTML tags
                 .trim();
         }
 
-        const comments = commentsRaw.map(c => ({
-            user: c.user.name,
-            text: decodeHtml(c.body)
-        }));
+        // Step 3: Parse JSON and map comments
+        const comments = jsonMatch.map(raw => {
+            // fix escaped quotes
+            const fixed = raw.replace(/\\"/g, '"');
+            let obj;
+            try {
+                obj = JSON.parse(fixed);
+            } catch {
+                return null;
+            }
+            if (!obj || !obj.body || !obj.user?.name) return null;
+
+            return {
+                user: obj.user.name,
+                text: decode(obj.body)
+            };
+        }).filter(Boolean);
+
+        if (!comments.length) return res.status(404).json({ error: "No comments parsed" });
 
         // Return first 10 unique comments
         const uniqueComments = [];
         const seen = new Set();
-
-        for (const comment of comments) {
-            const key = `${comment.user}:${comment.text}`;
+        for (const c of comments) {
+            const key = `${c.user}:${c.text}`;
             if (!seen.has(key)) {
                 seen.add(key);
-                uniqueComments.push(comment);
+                uniqueComments.push(c);
                 if (uniqueComments.length >= 10) break;
             }
         }
