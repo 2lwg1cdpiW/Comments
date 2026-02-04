@@ -3,47 +3,62 @@ export default async function handler(req, res) {
     if (!chapterUrl) return res.status(400).json({ error: "Missing URL" });
 
     try {
-        // 1. Transform the URL to the Data Stream URL
-        // Example: .../chapter/1 -> .../chapter/1.rsc
-        const rscUrl = chapterUrl.replace(/\/$/, "") + ".rsc";
-
-        const response = await fetch(rscUrl, {
-            headers: { 
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0",
-                "RSC": "1", // Mandatory header for Next.js data
-                "Accept": "*/*"
-            }
+        const response = await fetch(chapterUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0" }
         });
+        const html = await response.text();
 
-        const rawText = await response.text();
-
-        // 2. SCRAPE THE DATA
-        // In the RSC stream, comments look like this: \"body\":\"...\",\"user\":{\"name\":\"...\"
-        const commentRegex = /\\"body\\":\\"(.*?)\\",\\"user\\":\{.*?\\"name\\":\\"(.*?)\\"/g;
-        
-        const results = [];
+        // Extract script data
+        const scriptData = [];
+        const regex = /self\.__next_f\.push\(\[1,"(.*?)"\]\)/g;
         let match;
+        while ((match = regex.exec(html)) !== null) {
+            scriptData.push(match[1]);
+        }
+
+        // Combine and unescape
+        let fullContent = scriptData.join('');
         
-        while ((match = commentRegex.exec(rawText)) !== null) {
-            const body = match[1];
-            const user = match[2];
+        // Decode Unicode escapes first
+        fullContent = fullContent.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => 
+            String.fromCharCode(parseInt(hex, 16))
+        );
+        
+        // Then clean other escapes
+        fullContent = fullContent.replace(/\\n/g, '').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 
-            // Filter: Chapter comments usually don't have "data-type=\" inside them
-            // This filters out the sidebar junk you saw earlier
-            if (!body.includes("data-type=")) {
-                results.push({
-                    user: user,
-                    text: body.replace(/\\u003cp\\u003e/g, '').replace(/\\u003c\/p\\u003e/g, '').replace(/\\"/g, '"')
-                });
-            }
+        // Look for the comments array structure
+        // Pattern: Find sections that look like username followed by HTML content
+        const commentRegex = /"body":"([^"]*(?:\\.[^"]*)*)","user":\{"name":"([^"]+)"/g;
+        const comments = [];
+        let cMatch;
+
+        while ((cMatch = commentRegex.exec(fullContent)) !== null) {
+            const bodyRaw = cMatch[1];
+            const userName = cMatch[2];
+            
+            // Decode and clean the body HTML
+            let bodyText = bodyRaw
+                .replace(/<p>/g, '')
+                .replace(/<\/p>/g, '\n')
+                .replace(/<em>/g, '')
+                .replace(/<\/em>/g, '')
+                .replace(/<[^>]+>/g, '') // Remove any other HTML tags
+                .replace(/&#039;/g, "'")
+                .replace(/&amp;/g, '&')
+                .trim();
+            
+            comments.push({
+                user: userName,
+                text: bodyText
+            });
         }
 
-        if (results.length === 0) {
-            throw new Error("Scraper couldn't find chapter-specific comments in the stream.");
+        if (comments.length === 0) {
+            throw new Error("No comments found in script blocks.");
         }
 
-        // Return the first 10
-        res.status(200).json(results.slice(0, 10));
+        res.status(200).json(comments.slice(0, 10));
 
     } catch (e) {
         res.status(500).json({ error: e.message });
