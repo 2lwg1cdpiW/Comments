@@ -1,51 +1,42 @@
 export default async function handler(req, res) {
-    let { chapterUrl } = req.query;
-
-    if (!chapterUrl) return res.status(400).json({ error: "No URL provided" });
+    const { chapterUrl } = req.query;
 
     try {
-        // 1. Fetch with a real browser User-Agent to avoid Cloudflare blocks
-        const pageResponse = await fetch(chapterUrl, {
-            headers: { 
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
+        const response = await fetch(chapterUrl, {
+            headers: { "User-Agent": "Mozilla/5.0" }
         });
+        const html = await response.text();
 
-        if (!pageResponse.ok) throw new Error(`Page returned status ${pageResponse.status}. Double check the URL.`);
+        // 1. Find the "BAILOUT" section where the comments live
+        // This is a rough extract of the JSON hidden in the script tags
+        const scriptData = html.match(/self\.__next_f\.push\((\[1,.*?\])\)/g);
         
-        const html = await pageResponse.text();
+        if (!scriptData) throw new Error("Could not find the data layer on this page.");
 
-        // 2. Improved Regex: Looks for chapterId in the JSON payload more broadly
-        // This looks for "chapterId":"..." or "id":"..." inside the Next.js data
-        const idMatch = html.match(/"chapterId"\s*:\s*"(.*?)"/) || html.match(/"id"\s*:\s*"(.*?)"/);
+        // 2. Clean and combine the fragments
+        let fullData = scriptData.map(s => s.replace(/self\.__next_f\.push\(| \)$/g, '')).join('');
+
+        // 3. Use Regex to find comment-like patterns (user names + bodies)
+        // Since the JSON is escaped and fragmented, a direct JSON.parse often fails.
+        // We look for the "body" and "name" keys specifically.
+        const comments = [];
+        const commentRegex = /\\"id\\":(\d+),.*?\\"body\\":\\"(.*?)\\",.*?\\"name\\":\\"(.*?)\\"/g;
         
-        if (!idMatch) {
-            // Log a snippet of the HTML to your Vercel console to see what changed
-            console.log("HTML Sample:", html.substring(0, 500));
-            throw new Error("Could not find internal Chapter ID. The chapter might be empty or restricted.");
+        let match;
+        while ((match = commentRegex.exec(fullData)) !== null) {
+            comments.push({
+                id: match[1],
+                body: match[2].replace(/\\u003cp\\>|\\u003c\/p\\>/g, ''), // Clean HTML tags
+                user: match[3]
+            });
         }
 
-        const uuid = idMatch[1];
-
-        // 3. Masked fetch to the comment API
-        const commentResponse = await fetch(`https://gg.asuracomic.net/api/chapters/${uuid}/comments`, {
-            headers: {
-                "Referer": "https://asuracomic.net/",
-                "User-Agent": "Mozilla/5.0",
-                "Host": "gg.asuracomic.net"
-            }
+        // 4. Return the data found directly in the HTML
+        res.status(200).json({
+            source: "HTML Scrape (No API)",
+            count: comments.length,
+            comments: comments
         });
-
-        const data = await commentResponse.json();
-
-        // 4. Return clean, privacy-focused data
-        const comments = (data.data || []).map(c => ({
-            user: c.user?.name || "Anonymous",
-            text: c.body,
-            date: c.created_at
-        }));
-
-        res.status(200).json({ uuid, count: comments.length, comments });
 
     } catch (e) {
         res.status(500).json({ error: e.message });
